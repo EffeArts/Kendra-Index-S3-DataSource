@@ -1,0 +1,135 @@
+##This CloudFormation template creates an Amazon Kendra index and an S3 bucket. 
+## It adds an S3 datasource to the index.
+##The output of the CloudFormation template shows the Kendra index id and the S3 bucket name.
+##It takes about 30 minutes to complete the provision of the Amazon Kendra Index and the S3 bucket.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create an Amazon Kendra Index with an S3 Data Source
+
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Sub kendra-data-bucket-${AWS::AccountId}-${AWS::Region}
+
+
+  KendraIndexRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: kendra.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: KendraIndexPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'cloudwatch:namespace': 'Kendra'
+                Action:
+                  - 'cloudwatch:PutMetricData'
+              - Effect: Allow
+                Resource: '*'
+                Action: 'logs:DescribeLogGroups'
+              - Effect: Allow
+                Resource: !Sub
+                  - 'arn:aws:logs:${region}:${account}:log-group:/aws/kendra/*'
+                  - region: !Ref 'AWS::Region'
+                    account: !Ref 'AWS::AccountId'
+                Action: 'logs:CreateLogGroup'
+              - Effect: Allow
+                Resource: !Sub
+                  - 'arn:aws:logs:${region}:${account}:log-group:/aws/kendra/*:log-stream:*'
+                  - region: !Ref 'AWS::Region'
+                    account: !Ref 'AWS::AccountId'
+                Action: 
+                  - 'logs:DescribeLogStreams'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+
+  KendraIndex:
+    Type: 'AWS::Kendra::Index'
+    Properties:
+      Name: KendraIndex102023
+      Description: Kendra Index Used For RAG
+      Edition: 'DEVELOPER_EDITION'
+      RoleArn: !GetAtt KendraIndexRole.Arn
+      
+  
+                      
+  KendraDataSourceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: ''
+            Effect: Allow
+            Principal:
+              Service: kendra.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: KendraDataSourcePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: 
+                  - !Join
+                    - ''
+                    - - 'arn:aws:s3:::'
+                      - !Ref S3Bucket
+                      - '/*'
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                Resource: 
+                  - !Join
+                    - ''
+                    - - 'arn:aws:s3:::'
+                      - !Ref S3Bucket
+              - Effect: Allow
+                Action:
+                  - kendra:BatchPutDocument
+                  - kendra:BatchDeleteDocument
+                Resource: !Sub
+                  - 'arn:aws:kendra:${region}:${account}:index/${index}'
+                  - region: !Ref 'AWS::Region'
+                    account: !Ref 'AWS::AccountId'
+                    index: !GetAtt KendraIndex.Id
+
+  KendraDataSource:
+    Type: 'AWS::Kendra::DataSource'
+    Properties:
+      Name: 'S3DataSource'
+      IndexId: !GetAtt KendraIndex.Id
+      Type: 'S3'
+      DataSourceConfiguration:
+          S3Configuration:
+            BucketName: !Ref S3Bucket
+            # AccessControlListConfiguration:
+            #   KeyPath: '/'
+            # InclusionPrefixes:
+            #   - '*' # Include everything
+            # ExclusionPatterns:
+            #   - '*.tmp' # Patterns of files to exclude
+      RoleArn: !GetAtt KendraDataSourceRole.Arn
+
+Outputs:
+  KendraIndexName:
+    Description: Kendra Index Name
+    Value: !Ref KendraIndex
+
+  S3BucketName:
+    Description: S3 Bucket Name
+    Value: !Ref S3Bucket
